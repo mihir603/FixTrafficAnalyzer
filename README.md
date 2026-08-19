@@ -56,9 +56,6 @@ relationship so deleting a batch removes all of its parsed data.
 
 ## Screenshots
 
-Add screenshots of the running application to `docs/screenshots/` and update
-the filenames below as needed.
-
 ### Message Browser
 
 ![FIX Traffic Analyzer message browser](docs/screenshots/message-browser.png)
