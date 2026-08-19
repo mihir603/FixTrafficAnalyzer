@@ -1,9 +1,10 @@
-# FIX Batch Service
+# FIX Traffic Analyzer
 
-FIX Batch Service is a local Spring Boot application for importing, inspecting,
-searching, and replaying FIX 4.2 traffic captures. It includes a browser-based
-UI and a JSON/CSV API. The application is designed for local analysis: uploaded
-captures and parsed data stay on the machine running the service.
+FIX Traffic Analyzer is a local Spring Boot application for importing,
+inspecting, searching, and replaying FIX 4.2 traffic captures. It includes a
+browser-based UI and a JSON/CSV API. The application is designed for local
+analysis: uploaded captures and parsed data stay on the machine running the
+service.
 
 ## Features
 
@@ -15,6 +16,43 @@ captures and parsed data stay on the machine running the service.
 - Replay captured messages in real-time or burst mode through an SSE stream.
 - Export filtered messages to CSV.
 - Use synthetic India and US demo captures included in `samples/`.
+
+## The FIX Batch Logic
+
+The analyzer is built on a batch-import pipeline. Keep this pipeline intact
+when changing the UI, API, search queries, or replay behavior:
+
+1. `FixTrafficParser` parses one input line into a `ParsedLine`. It supports
+   enveloped log lines, raw messages, `|` delimiters, SOH delimiters, and engine
+   event lines.
+2. `ImportService.importStream` creates one `import_batch`, processes the input
+   sequentially, and stores every recognized line in `fix_log`.
+3. FIX messages are additionally indexed in `fix_message` for filtering,
+   order-chain lookup, sequence-gap detection, statistics, and export.
+4. The import is transactional. If processing fails, the partial batch must
+   not be treated as a completed import.
+
+The database relationship is `import_batch` -> `fix_log` -> `fix_message`.
+`fix_log.raw` remains the original parsed payload and is required for detail
+views and text search. Do not replace the raw message with only extracted
+fields.
+
+### Safe Changes
+
+- Change presentation in `src/main/resources/static/index.html` without
+  changing import behavior.
+- Add API filters in `QueryService` and corresponding controller parameters.
+- Add an indexed FIX field by updating `schema.sql`, `ImportService.insertMessage`,
+  the relevant model/query projections, and tests together.
+- Extend supported capture formats in `FixTrafficParser`, keeping existing
+  envelope, raw-message, event, and delimiter behavior compatible.
+- Update `FixDictionaryService` or `custom-tags.properties` when adding names
+  for tags or enumerated values.
+
+When changing parser or batch-import code, update parser tests and verify that
+message, event, blank, malformed, and mixed-delimiter lines still produce the
+expected import counters. Keep `deleteImport` aligned with the three-table
+relationship so deleting a batch removes all of its parsed data.
 
 ## Screenshots
 
