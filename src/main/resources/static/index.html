@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIX Traffic Analyzer (local)</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2230; --border: #2a3648; --text: #d6dee8;
+    --muted: #8494a7; --accent: #4da3ff; --in: #3ecf8e; --out: #ffb454; --evt: #b48cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "SF Mono", Menlo, Consolas, monospace; background: var(--bg); color: var(--text); font-size: 13px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; }
+  button { background: var(--accent); color: #06121f; border: 0; border-radius: 5px; padding: 6px 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: transparent; color: #ff7b72; border: 1px solid #ff7b72; }
+  button:disabled { opacity: .5; cursor: default; }
+  #stats { display: flex; gap: 8px; padding: 8px 16px; flex-wrap: wrap; }
+  .chip { background: var(--panel); border: 1px solid var(--border); border-radius: 5px; padding: 4px 10px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); }
+  .chip b { color: var(--accent); }
+  #tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+  #tabs button { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; }
+  #tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+  #filters { display: flex; gap: 8px; padding: 8px 16px; align-items: center; flex-wrap: wrap; }
+  input, select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; font-family: inherit; }
+  input:focus, select:focus { outline: 1px solid var(--accent); }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { position: sticky; top: 0; background: var(--panel); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; white-space: nowrap; }
+  tbody td { padding: 5px 8px; border-bottom: 1px solid #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #1c2635; }
+  tr.IN td.dir { color: var(--in); } tr.OUT td.dir { color: var(--out); }
+  .dir { font-weight: 700; }
+  .session { color: var(--muted); }
+  #wrap { display: flex; height: calc(100vh - 178px); }
+  #listPane { flex: 1; overflow: auto; min-width: 0; }
+  #detailPane { width: 460px; border-left: 1px solid var(--border); overflow: auto; background: var(--panel); display: none; }
+  #detailPane.open { display: block; }
+  #detailPane .pad { padding: 12px; }
+  #detailPane h2 { font-size: 14px; margin: 0 0 4px; }
+  #detailPane .raw { word-break: break-all; white-space: pre-wrap; background: #0d1117; border: 1px solid var(--border); border-radius: 5px; padding: 8px; color: var(--muted); font-size: 11px; }
+  #detailPane table td { padding: 3px 6px; border-bottom: 1px solid #232f42; white-space: normal; }
+  #detailPane .tag { color: var(--accent); width: 50px; }
+  #detailPane .fname { color: var(--muted); }
+  #detailPane .vname { color: var(--in); font-size: 11px; }
+  #pager { display: flex; gap: 8px; align-items: center; padding: 8px 16px; color: var(--muted); }
+  #toast { position: fixed; bottom: 16px; right: 16px; background: var(--panel); border: 1px solid var(--accent); padding: 10px 14px; border-radius: 6px; display: none; max-width: 420px; }
+  .chainItem { cursor: pointer; padding: 2px 0; } .chainItem:hover { color: var(--accent); }
+  .empty { color: var(--muted); padding: 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FIX Traffic Analyzer</h1>
+  <span class="badge">local only &mdash; no outbound requests</span>
+  <input type="file" id="fileInput" style="display:none" accept=".txt,.log,.fix,text/plain">
+  <button id="uploadBtn">Upload traffic file</button>
+  <button id="defaultBtn" class="ghost">Import demo</button>
+  <button id="exportBtn" class="ghost">Export CSV</button>
+  <button id="deleteBtn" class="danger">Delete import</button>
+  <span id="importInfo" style="color:var(--muted)"></span>
+</header>
+
+<div id="stats"></div>
+
+<div id="tabs">
+  <button data-tab="messages" class="active">Messages</button>
+  <button data-tab="replay">Replay</button>
+  <button data-tab="orders">Orders</button>
+  <button data-tab="gaps">Seq Gaps</button>
+  <button data-tab="events">Events</button>
+</div>
+
+<div id="filters">
+  <select id="fMsgType"><option value="">All msg types</option></select>
+  <select id="fDir">
+    <option value="">In + Out</option><option value="IN">In</option><option value="OUT">Out</option>
+  </select>
+  <input id="fSymbol" placeholder="Symbol" size="10">
+  <input id="fClOrd" placeholder="ClOrdID (11)" size="14">
+  <input id="fQ" placeholder='Raw contains, e.g. 35=8' size="18">
+  <button id="searchBtn">Search</button>
+  <button id="clearBtn" class="ghost">Clear</button>
+</div>
+
+<div id="replayBar" style="display:none;align-items:center;gap:10px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap">
+  <button id="playBtn">&#9654; Play</button>
+  <select id="rSpeed" title="Speed">
+    <option value="1">1x</option><option value="5">5x</option>
+    <option value="10" selected>10x</option><option value="50">50x</option><option value="100">100x</option>
+  </select>
+  <select id="rMode" title="Timing mode">
+    <option value="realtime" selected>realtime (scaled)</option>
+    <option value="burst">burst (fixed rate)</option>
+  </select>
+  <label style="color:var(--muted);display:flex;align-items:center;gap:4px">
+    <input type="checkbox" id="rHide" checked> hide heartbeats/session
+  </label>
+  <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1;min-width:200px">
+  <span id="replayStatus" style="color:var(--muted);white-space:nowrap"></span>
+</div>
+
+<div id="wrap">
+  <div id="listPane">
+    <table>
+      <thead><tr id="headRow"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="pager">
+      <button id="prevBtn" class="ghost">&larr; Prev</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn" class="ghost">Next &rarr;</button>
+    </div>
+  </div>
+  <div id="detailPane"><div class="pad" id="detailBody"></div></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let page = 0, size = 50, total = 0, currentImport = null, tab = 'messages';
+
+const HEADERS = {
+  messages: ['#','Time','Dir','35','Message','Sender','Target','ClOrdID','OrderID','Symbol','Side','Qty','Price','ExecType','OrdStatus'],
+  orders:   ['ClOrdID','Symbol','Side','Messages','First','Last'],
+  gaps:     ['Session','Missing seq','After time'],
+  events:   ['#','Line','Time','Plugin','Event']
+};
+
+function toast(msg, ms = 4000) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', ms);
+}
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).error || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+async function loadStats() {
+  const s = await api('/api/stats' + (currentImport ? '?importId=' + currentImport : ''));
+  const el = $('stats'); el.innerHTML = '';
+  const mk = (label, onclick) => {
+    const c = document.createElement('span'); c.className = 'chip'; c.innerHTML = label;
+    if (onclick) c.onclick = onclick; el.appendChild(c);
+  };
+  mk(`Messages <b>${s.totalMessages ?? 0}</b>`, () => setTab('messages'));
+  mk(`Events <b>${s.totalEvents ?? 0}</b>`, () => setTab('events'));
+  (s.byMsgType || []).forEach(m => {
+    const t = v(m, 'msgType'), name = v(m, 'msgName'), n = v(m, 'n');
+    mk(`<b>${esc(t || '?')}</b> ${esc(name || '')} <b>${n}</b>`,
+      () => { setTab('messages'); $('fMsgType').value = t; search(0); });
+  });
+  (s.byDirection || []).forEach(d => {
+    mk(`Dir <b>${esc(v(d, 'direction') || '')}</b> ${v(d, 'n')}`);
+  });
+}
+
+async function loadMsgTypeFilter() {
+  const s = await api('/api/stats');
+  const sel = $('fMsgType');
+  sel.innerHTML = '<option value="">All msg types</option>';
+  (s.byMsgType || []).forEach(m => {
+    const o = document.createElement('option');
+    o.value = v(m, 'msgType');
+    o.textContent = `${v(m, 'msgType') || '?'} - ${v(m, 'msgName') || ''} (${v(m, 'n')})`;
+    sel.appendChild(o);
+  });
+}
+
+function params() {
+  const p = new URLSearchParams();
+  if (currentImport) p.set('importId', currentImport);
+  if ($('fMsgType').value) p.set('msgType', $('fMsgType').value);
+  if ($('fDir').value) p.set('direction', $('fDir').value);
+  if ($('fSymbol').value) p.set('symbol', $('fSymbol').value);
+  if ($('fClOrd').value) p.set('clOrdId', $('fClOrd').value);
+  if ($('fQ').value) p.set('q', $('fQ').value);
+  p.set('page', page); p.set('size', size);
+  return p;
+}
+
+function renderHead(cols) {
+  $('headRow').innerHTML = cols.map(c => `<th>${c}</th>`).join('');
+}
+
+async function search(p) {
+  if (p !== undefined) page = p;
+  const data = await api('/api/messages?' + params());
+  total = data.total;
+  renderHead(HEADERS.messages);
+  const tb = $('rows'); tb.innerHTML = '';
+  data.content.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.className = (r.direction || '') + (isSession(r.msgType) ? ' session' : '');
+    tr.innerHTML =
+      `<td>${r.id}</td><td>${fmtTime(r.logTime)}</td><td class="dir">${esc(r.direction || '')}</td>` +
+      `<td>${esc(r.msgType || '')}</td><td>${esc(r.msgName || '')}</td>` +
+      `<td>${esc(r.senderCompId || '')}</td><td>${esc(r.targetCompId || '')}</td>` +
+      `<td>${esc(r.clOrdId || '')}</td><td>${esc(r.orderId || '')}</td>` +
+      `<td>${esc(r.symbol || '')}</td><td>${esc(sideName(r.side))}</td>` +
+      `<td>${r.orderQty ?? ''}</td><td>${r.price ?? ''}</td>` +
+      `<td>${esc(r.execType || '')}</td><td>${esc(r.ordStatus || '')}</td>`;
+    tr.onclick = () => showDetail(r.id);
+    tb.appendChild(tr);
+  });
+  $('pageInfo').textContent = `${total} messages — page ${data.page + 1} / ${Math.max(1, Math.ceil(total / size))}`;
+  $('prevBtn').disabled = data.page <= 0;
+  $('nextBtn').disabled = (data.page + 1) * size >= total;
+  $('pager').style.display = 'flex';
+}
+
+async function loadOrders() {
+  const rows = await api('/api/orders' + (currentImport ? '?importId=' + currentImport : ''));
+  renderHead(HEADERS.orders);
+  const tb = $('rows'); tb.innerHTML = '';
+  rows.forEach(o => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(o.clOrdId)}</td><td>${esc(o.symbol || '')}</td><td>${esc(sideName(o.side))}</td>` +
+      `<td>${o.messageCount}</td><td>${fmtTime(o.firstTime)}</td><td>${fmtTime(o.lastTime)}</td>`;
+    tr.onclick = () => { setTab('messages'); $('fClOrd').value = o.clOrdId; search(0); };
+    tb.appendChild(tr);
+  });
+  if (!rows.length) tb.innerHTML = '<tr><td class="empty">No orders (no ClOrdID tag 11 found).</td></tr>';
+  $('pageInfo').textContent = `${rows.length} orders`;
+  $('pager').style.display = 'flex';
+  $('prevBtn').disabled = $('nextBtn').disabled = true;
+}
+
+async function loadGaps() {
+  const rows = await api('/api/gaps' + (currentImport ? '?importId=' + currentImport : ''));
+  renderHead(HEADERS.gaps);
+  const tb = $('rows'); tb.innerHTML = '';
+  rows.forEach(g => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(g.senderCompId)} &rarr; ${esc(g.targetCompId)}</td>` +
+      `<td>${g.fromSeq} .. ${g.toSeq} (${g.toSeq - g.fromSeq + 1} missing)</td><td>${fmtTime(g.afterTime)}</td>`;
+    tb.appendChild(tr);
+  });
+  if (!rows.length) tb.innerHTML = '<tr><td class="empty">No sequence gaps detected. ✓</td></tr>';
+  $('pageInfo').textContent = `${rows.length} gaps`;
+  $('pager').style.display = 'flex';
+  $('prevBtn').disabled = $('nextBtn').disabled = true;
+}
+
+async function loadEvents() {
+  const rows = await api('/api/events' + (currentImport ? '?importId=' + currentImport : ''));
+  renderHead(HEADERS.events);
+  const tb = $('rows'); tb.innerHTML = '';
+  rows.forEach(e => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${e.id}</td><td>${e.lineNo}</td><td>${fmtTime(e.logTime)}</td>` +
+      `<td>${esc(e.plugin || '')}</td><td style="white-space:normal">${esc(e.text || '')}</td>`;
+    tb.appendChild(tr);
+  });
+  if (!rows.length) tb.innerHTML = '<tr><td class="empty">No engine events.</td></tr>';
+  $('pageInfo').textContent = `${rows.length} events`;
+  $('pager').style.display = 'flex';
+  $('prevBtn').disabled = $('nextBtn').disabled = true;
+}
+
+// ---------------- Replay ----------------
+let es = null, playing = false, emitted = 0, lastTime = null;
+let replayStart = null, replayEnd = null, replayTotal = 0;
+
+function toLocalISO(d) {
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' +
+    p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function parseISO(s) { return s ? new Date(s) : null; }
+
+async function enterReplay() {
+  stopReplay();
+  emitted = 0; lastTime = null;
+  renderHead(HEADERS.messages);
+  $('rows').innerHTML = '';
+  const meta = await api('/api/replay/meta' + (currentImport ? '?importId=' + currentImport : ''));
+  replayStart = meta.start; replayEnd = meta.end; replayTotal = meta.total;
+  $('scrub').value = 0;
+  updateReplayStatus();
+  $('pager').style.display = 'none';
+}
+
+function replayParams() {
+  const p = new URLSearchParams();
+  if (currentImport) p.set('importId', currentImport);
+  if ($('fMsgType').value) p.set('msgType', $('fMsgType').value);
+  if ($('fDir').value) p.set('direction', $('fDir').value);
+  if ($('fSymbol').value) p.set('symbol', $('fSymbol').value);
+  if ($('fClOrd').value) p.set('clOrdId', $('fClOrd').value);
+  if ($('fQ').value) p.set('q', $('fQ').value);
+  p.set('speed', $('rSpeed').value);
+  p.set('mode', $('rMode').value);
+  p.set('hideSession', $('rHide').checked);
+  if (lastTime) p.set('from', lastTime);
+  return p;
+}
+
+function playReplay() {
+  if (playing) return;
+  es = new EventSource('/api/replay/stream?' + replayParams());
+  es.addEventListener('meta', ev => {
+    const m = JSON.parse(ev.data);
+    if (emitted === 0) $('replayStatus').textContent = `replay of ${m.total} messages`;
+  });
+  es.addEventListener('message', ev => {
+    const r = JSON.parse(ev.data);
+    appendFeedRow(r);
+    emitted++;
+    if (r.logTime) {
+      lastTime = r.logTime;
+      const f = fractionOf(r.logTime);
+      if (f >= 0) $('scrub').value = Math.round(f * 1000);
+    }
+    updateReplayStatus();
+  });
+  es.addEventListener('done', () => { stopReplay(); toast('Replay finished'); });
+  es.onerror = () => { if (playing) { stopReplay(); toast('Replay stream ended'); } };
+  playing = true;
+  $('playBtn').innerHTML = '&#10074;&#10074; Pause';
+}
+
+function stopReplay() {
+  if (es) { es.close(); es = null; }
+  playing = false;
+  $('playBtn').innerHTML = '&#9654; Play';
+}
+
+function appendFeedRow(r) {
+  const tb = $('rows');
+  const tr = document.createElement('tr');
+  tr.className = (r.direction || '') + (isSession(r.msgType) ? ' session' : '');
+  tr.innerHTML =
+    `<td>${r.id}</td><td>${fmtTime(r.logTime)}</td><td class="dir">${esc(r.direction || '')}</td>` +
+    `<td>${esc(r.msgType || '')}</td><td>${esc(r.msgName || '')}</td>` +
+    `<td>${esc(r.senderCompId || '')}</td><td>${esc(r.targetCompId || '')}</td>` +
+    `<td>${esc(r.clOrdId || '')}</td><td>${esc(r.orderId || '')}</td>` +
+    `<td>${esc(r.symbol || '')}</td><td>${esc(sideName(r.side))}</td>` +
+    `<td>${r.orderQty ?? ''}</td><td>${r.price ?? ''}</td>` +
+    `<td>${esc(r.execType || '')}</td><td>${esc(r.ordStatus || '')}</td>`;
+  tr.onclick = () => showDetail(r.id);
+  tb.appendChild(tr);
+  if (tb.children.length > 2000) tb.removeChild(tb.firstChild);
+  $('listPane').scrollTop = $('listPane').scrollHeight;
+}
+
+function fractionOf(iso) {
+  const s = parseISO(replayStart), e = parseISO(replayEnd), t = parseISO(iso);
+  if (!s || !e || !t) return -1;
+  const span = e.getTime() - s.getTime();
+  return span > 0 ? (t.getTime() - s.getTime()) / span : 0;
+}
+
+function updateReplayStatus() {
+  $('replayStatus').textContent =
+    `${playing ? 'playing' : 'paused'} ${$('rSpeed').value}x ${$('rMode').value} · emitted ${emitted}` +
+    (lastTime ? ` · T=${fmtTime(lastTime)}` : '') +
+    (replayStart ? ` · range ${fmtTime(replayStart)} → ${fmtTime(replayEnd)} (${replayTotal})` : '');
+}
+
+function scrubTo(v) {
+  const f = v / 1000;
+  const s = parseISO(replayStart), e = parseISO(replayEnd);
+  if (!s || !e) return;
+  const t = new Date(s.getTime() + f * (e.getTime() - s.getTime()));
+  lastTime = toLocalISO(t);
+  emitted = 0;
+  $('rows').innerHTML = '';
+  if (playing) { stopReplay(); playReplay(); }
+  updateReplayStatus();
+}
+
+function setTab(t) {
+  tab = t;
+  stopReplay();
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  const showFilters = t === 'messages' || t === 'replay';
+  $('filters').style.display = showFilters ? 'flex' : 'none';
+  $('replayBar').style.display = t === 'replay' ? 'flex' : 'none';
+  if (t === 'messages') search(0);
+  else if (t === 'replay') enterReplay();
+  else if (t === 'orders') loadOrders();
+  else if (t === 'gaps') loadGaps();
+  else if (t === 'events') loadEvents();
+}
+
+async function showDetail(id) {
+  const d = await api('/api/messages/' + id);
+  const chain = await api('/api/messages/' + id + '/chain');
+  const r = d.row;
+  let html = `<h2>${esc(r.msgName || 'Message')} <span style="color:var(--muted)">35=${esc(r.msgType || '')}</span></h2>`;
+  html += `<div style="color:var(--muted);margin-bottom:8px">${fmtTime(r.logTime)} &middot; ${esc(r.direction || '')} &middot; ${esc(r.version || '')} &middot; id ${r.id}</div>`;
+  html += '<table>';
+  d.fields.forEach(f => {
+    html += `<tr><td class="tag">${f.tag}</td><td class="fname">${esc(f.name || '')}</td>` +
+      `<td>${esc(f.value)}${f.valueName ? ` <span class="vname">${esc(f.valueName)}</span>` : ''}</td></tr>`;
+  });
+  html += '</table>';
+  if (chain.length > 1) {
+    html += `<h2 style="margin-top:12px">Order chain (${chain.length})</h2>`;
+    chain.forEach(c => {
+      html += `<div class="chainItem" onclick="showDetail(${c.id})">${fmtTime(c.logTime)} ${esc(c.direction || '')} ` +
+        `<b>${esc(c.msgType)}</b> ${esc(c.msgName || '')} ${esc(c.clOrdId || '')} ${esc(c.execType || '')} ${esc(c.ordStatus || '')}</div>`;
+    });
+  }
+  html += '<h2 style="margin-top:12px">Raw</h2>';
+  html += `<div class="raw">${esc(d.raw || '')}</div>`;
+  $('detailBody').innerHTML = html;
+  $('detailPane').classList.add('open');
+}
+
+async function doImport(url, body) {
+  $('importInfo').textContent = 'importing...';
+  try {
+    const s = await api(url, { method: 'POST', body });
+    currentImport = s.id;
+    toast(`Imported ${s.filename}: ${s.parsedMessages} messages, ${s.eventLines} events, ${s.skippedLines} skipped`);
+    $('importInfo').textContent = `import #${s.id}: ${s.filename}`;
+    await loadStats(); await loadMsgTypeFilter(); setTab('messages');
+  } catch (e) {
+    $('importInfo').textContent = '';
+    toast('Import failed: ' + e.message);
+  }
+}
+
+$('uploadBtn').onclick = () => $('fileInput').click();
+$('fileInput').onchange = () => {
+  const f = $('fileInput').files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  doImport('/api/imports', fd);
+};
+$('defaultBtn').onclick = () => doImport('/api/imports/default');
+$('exportBtn').onclick = () => { window.location = '/api/export.csv?' + params(); };
+$('deleteBtn').onclick = async () => {
+  if (!currentImport) { toast('No import selected'); return; }
+  if (!confirm(`Delete import #${currentImport} and all its messages?`)) return;
+  await api('/api/imports/' + currentImport, { method: 'DELETE' });
+  currentImport = null;
+  $('importInfo').textContent = '';
+  const imports = await api('/api/imports');
+  if (imports.length) { currentImport = imports[0].id; $('importInfo').textContent = `import #${imports[0].id}: ${imports[0].filename}`; }
+  await loadStats(); await loadMsgTypeFilter(); setTab('messages');
+};
+$('searchBtn').onclick = () => {
+  if (tab === 'replay') { stopReplay(); emitted = 0; lastTime = null; $('rows').innerHTML = ''; $('scrub').value = 0; playReplay(); }
+  else search(0);
+};
+$('clearBtn').onclick = () => {
+  $('fMsgType').value = ''; $('fDir').value = ''; $('fSymbol').value = ''; $('fClOrd').value = ''; $('fQ').value = '';
+  if (tab === 'replay') { stopReplay(); emitted = 0; lastTime = null; $('rows').innerHTML = ''; $('scrub').value = 0; playReplay(); }
+  else search(0);
+};
+$('prevBtn').onclick = () => search(page - 1);
+$('nextBtn').onclick = () => search(page + 1);
+['fSymbol', 'fClOrd', 'fQ'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('searchBtn').click(); }));
+$('playBtn').onclick = () => playing ? stopReplay() : playReplay();
+$('rSpeed').onchange = () => { if (playing) { stopReplay(); playReplay(); } updateReplayStatus(); };
+$('rMode').onchange = () => { if (playing) { stopReplay(); playReplay(); } updateReplayStatus(); };
+$('rHide').onchange = () => { if (playing) { stopReplay(); playReplay(); } updateReplayStatus(); };
+$('scrub').addEventListener('change', () => scrubTo($('scrub').value));
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+
+function isSession(t) { return ['0', '1', '2', '3', '4', '5', 'A'].includes(t); }
+function sideName(s) { return s === '1' ? '1 Buy' : s === '2' ? '2 Sell' : (s || ''); }
+function fmtTime(t) { return t ? t.replace('T', ' ').substring(0, 19) : ''; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// Case-insensitive value lookup (backend keys are camelCase; DB-derived maps may be uppercase)
+const v = (o, k) => {
+  if (o == null) return '';
+  if (o[k] !== undefined) return o[k];
+  if (o[k.toUpperCase()] !== undefined) return o[k.toUpperCase()];
+  const cap = k.charAt(0).toUpperCase() + k.slice(1);
+  return o[cap] !== undefined ? o[cap] : '';
+};
+
+(async function init() {
+  try {
+    const imports = await api('/api/imports');
+    if (imports.length) {
+      currentImport = imports[0].id;
+      $('importInfo').textContent = `import #${imports[0].id}: ${imports[0].filename} (${imports[0].parsedMessages} msgs)`;
+    }
+    await loadStats(); await loadMsgTypeFilter(); await search(0);
+  } catch (e) { toast('Init failed: ' + e.message); }
+})();
+</script>
+</body>
+</html>
